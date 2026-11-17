@@ -1,0 +1,394 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum Status {
+  OPEN
+  IN_PROGRESS
+  WAITING_SUPPLIER
+  WAITING_INTERNAL
+  WAITING_APPROVAL
+  WAITING_MATERIAL
+  WAITING_DOCUMENTATION
+  WAITING_MOBILIZATION
+  SCHEDULED
+  BLOCKED
+  DONE
+  CANCELED
+}
+
+enum Priority {
+  P1
+  P2
+  P3
+  P4
+}
+
+enum Impact {
+  NONE
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum HistoryType {
+  CREATED
+  UPDATED
+  STATUS
+  PRIORITY
+  DUE_DATE
+  OWNER
+  COMMENT
+  UPDATE
+  BLOCK
+  UNBLOCK
+  COMPLETED
+  REOPENED
+  CANCELED
+  DEPENDENCY
+  REFERENCE
+  FOLLOW_UP
+}
+
+enum LinkKind {
+  LINK
+  RC
+  PO
+  DOCUMENT
+}
+
+enum DepKind {
+  BLOCKS
+  RELATED
+}
+
+enum SuggestionStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  EXPIRED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(EDITOR)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  person        Person?
+  memberships   ProjectMember[]
+  conversations Conversation[]
+  notifications Notification[]
+  history       HistoryEntry[]
+  comments      Comment[]
+  auditLogs     AuditLog[]
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  name        String
+  description String?
+  active      Boolean   @default(true)
+  assetId     String?
+  asset       Asset?    @relation(fields: [assetId], references: [id])
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  members    ProjectMember[]
+  pendencies Pendency[]
+}
+
+model ProjectMember {
+  userId    String
+  projectId String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([userId, projectId])
+}
+
+model Asset {
+  id          String    @id @default(cuid())
+  name        String    @unique
+  description String?
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
+
+  projects   Project[]
+  systems    System[]
+  equipments Equipment[]
+  pendencies Pendency[]
+}
+
+model System {
+  id         String      @id @default(cuid())
+  name       String
+  assetId    String?
+  asset      Asset?      @relation(fields: [assetId], references: [id])
+  equipments Equipment[]
+  pendencies Pendency[]
+
+  @@unique([assetId, name])
+}
+
+model Equipment {
+  id         String     @id @default(cuid())
+  tag        String
+  name       String
+  assetId    String?
+  systemId   String?
+  asset      Asset?     @relation(fields: [assetId], references: [id])
+  system     System?    @relation(fields: [systemId], references: [id])
+  pendencies Pendency[]
+
+  @@unique([assetId, tag])
+}
+
+model Supplier {
+  id         String     @id @default(cuid())
+  name       String     @unique
+  contact    String?
+  email      String?
+  phone      String?
+  createdAt  DateTime   @default(now())
+  deletedAt  DateTime?
+  people     Person[]
+  pendencies Pendency[]
+}
+
+model Person {
+  id         String    @id @default(cuid())
+  name       String
+  email      String?
+  area       String?
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  userId     String?   @unique
+  user       User?     @relation(fields: [userId], references: [id])
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
+
+  currentOwned   Pendency[]         @relation("CurrentOwner")
+  nextActionOwn  Pendency[]         @relation("NextActionOwner")
+  involvedIn     PendencyInvolved[]
+}
+
+model Pendency {
+  id     String @id @default(cuid())
+  number Int    @unique @default(autoincrement())
+
+  title       String
+  description String?
+  status      Status   @default(OPEN)
+  priority    Priority @default(P3)
+  dueDate     DateTime?
+
+  projectId   String?
+  assetId     String?
+  systemId    String?
+  equipmentId String?
+  tag         String?
+  supplierId  String?
+  area        String?
+
+  currentOwnerId    String?
+  nextActionOwnerId String?
+  nextAction        String?
+  blockReason       String?
+  followUpDate      DateTime?
+  source            String?
+  notes             String?
+
+  // Fatores da priorização transparente
+  criticality         Int     @default(3) // 1 (baixa) a 5 (máxima)
+  operationalImpact   Impact  @default(LOW)
+  financialImpact     Impact  @default(NONE)
+  safety              Boolean @default(false)
+  shutdownImpact      Boolean @default(false) // parada / Grande Intervenção
+  materialRelated     Boolean @default(false)
+  mobilizationRelated Boolean @default(false)
+  chaseCount          Int     @default(0)
+
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+  deletedAt   DateTime?
+
+  project         Project?   @relation(fields: [projectId], references: [id])
+  asset           Asset?     @relation(fields: [assetId], references: [id])
+  system          System?    @relation(fields: [systemId], references: [id])
+  equipment       Equipment? @relation(fields: [equipmentId], references: [id])
+  supplier        Supplier?  @relation(fields: [supplierId], references: [id])
+  currentOwner    Person?    @relation("CurrentOwner", fields: [currentOwnerId], references: [id])
+  nextActionOwner Person?    @relation("NextActionOwner", fields: [nextActionOwnerId], references: [id])
+
+  involved    PendencyInvolved[]
+  comments    Comment[]
+  history     HistoryEntry[]
+  references  Reference[]
+  blocks      Dependency[]       @relation("Blocker")
+  blockedBy   Dependency[]       @relation("Blocked")
+  suggestions AiSuggestion[]
+  notifications Notification[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([dueDate])
+  @@index([projectId])
+  @@index([supplierId])
+  @@index([deletedAt])
+}
+
+model PendencyInvolved {
+  pendencyId String
+  personId   String
+  pendency   Pendency @relation(fields: [pendencyId], references: [id], onDelete: Cascade)
+  person     Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@id([pendencyId, personId])
+}
+
+// "from" bloqueia "to" (BLOCKS) ou relação simples (RELATED)
+model Dependency {
+  id        String   @id @default(cuid())
+  kind      DepKind  @default(BLOCKS)
+  fromId    String
+  toId      String
+  from      Pendency @relation("Blocker", fields: [fromId], references: [id], onDelete: Cascade)
+  to        Pendency @relation("Blocked", fields: [toId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([fromId, toId, kind])
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  pendencyId String
+  authorId   String?
+  body       String
+  viaAi      Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  pendency   Pendency @relation(fields: [pendencyId], references: [id], onDelete: Cascade)
+  author     User?    @relation(fields: [authorId], references: [id])
+
+  @@index([pendencyId])
+}
+
+model HistoryEntry {
+  id         String      @id @default(cuid())
+  pendencyId String
+  userId     String?
+  type       HistoryType
+  field      String?
+  oldValue   String?
+  newValue   String?
+  note       String?
+  viaAi      Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+  pendency   Pendency    @relation(fields: [pendencyId], references: [id], onDelete: Cascade)
+  user       User?       @relation(fields: [userId], references: [id])
+
+  @@index([pendencyId, createdAt])
+  @@index([createdAt])
+}
+
+model Reference {
+  id         String   @id @default(cuid())
+  pendencyId String
+  kind       LinkKind @default(LINK)
+  label      String
+  url        String?
+  code       String?
+  createdAt  DateTime @default(now())
+  pendency   Pendency @relation(fields: [pendencyId], references: [id], onDelete: Cascade)
+
+  @@index([pendencyId])
+}
+
+model Conversation {
+  id        String        @id @default(cuid())
+  userId    String
+  title     String?
+  createdAt DateTime      @default(now())
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  ChatMessage[]
+  suggestions AiSuggestion[]
+}
+
+model ChatMessage {
+  id             String       @id @default(cuid())
+  conversationId String
+  role           String // user | assistant
+  content        String
+  meta           Json?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  suggestions    AiSuggestion[]
+
+  @@index([conversationId, createdAt])
+}
+
+model AiSuggestion {
+  id             String           @id @default(cuid())
+  conversationId String
+  messageId      String?
+  userId         String
+  pendencyId     String?
+  kind           String // CREATE | UPDATE | ADD_UPDATE | PRIORITY_CHANGE
+  summary        String
+  rationale      String?
+  payload        Json
+  status         SuggestionStatus @default(PENDING)
+  createdAt      DateTime         @default(now())
+  resolvedAt     DateTime?
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  message        ChatMessage?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  pendency       Pendency?        @relation(fields: [pendencyId], references: [id])
+
+  @@index([conversationId])
+}
+
+model Notification {
+  id         String    @id @default(cuid())
+  userId     String
+  title      String
+  body       String?
+  pendencyId String?
+  read       Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pendency   Pendency? @relation(fields: [pendencyId], references: [id])
+
+  @@index([userId, read])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  action    String
+  entity    String?
+  entityId  String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([createdAt])
+}
